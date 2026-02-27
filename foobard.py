@@ -142,7 +142,7 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
-            nn.ReLU(),  # nn.GELU(),
+            nn.SiLU(),  # nn.ReLU(),  # nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, dim),
             nn.Dropout(dropout),
@@ -153,7 +153,7 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads=4, dim_head=64, dropout=0.0):
+    def __init__(self, dim, heads, dim_head, dropout=0.0):
         super().__init__()
         inner_dim = dim_head * heads
         project_out = not (heads == 1 and dim_head == dim)
@@ -184,7 +184,7 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 
-from my_experiments import AttentionZP
+import my_experiments
 
 
 class Transformer(nn.Module):
@@ -197,17 +197,19 @@ class Transformer(nn.Module):
                     [
                         PreNorm(
                             dim,
-                            # Attention(
-                            #     dim, heads=heads, dim_head=dim_head, dropout=dropout
-                            # ),
-                            AttentionZP(
+                            my_experiments.AttentionZP(
                                 dim,
                                 dim,
                                 heads,
                                 dim_head,
                                 dim_head,
                                 False,
+                                dropout=dropout,
                             ),
+                            # Attention(
+                            #     dim, heads=heads, dim_head=dim_head, dropout=dropout
+                            # ),
+                            # my_experiments.AttentionMono(dim, dim_head),
                         ),
                         PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout)),
                     ]
@@ -289,25 +291,11 @@ class ViT(nn.Module):
         return self.mlp_head(x)
 
 
-# %%
-model = ViT(
-    image_size=28,
-    patch_size=4,
-    num_classes=10,
-    channels=1,
-    dim=64,
-    depth=6,
-    heads=4,
-    mlp_dim=128,
-)
-optimizer = optim.Adam(model.parameters(), lr=0.003)
-
 # %% [markdown]
 # Let's see how the model looks like.
 
 # %%
-model.to(device)
-summary(model)
+# summary(model)
 
 # %% [markdown]
 # This is it -- 4 transformer blocks, followed by a linear classification layer. Let us quickly see how many trainable parameters are present in this model.
@@ -315,11 +303,11 @@ summary(model)
 # %%
 
 
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+# def count_parameters(model):
+#     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-print(count_parameters(model))
+# print(count_parameters(model))
 
 # %% [markdown]
 # About half a million. Not too bad; the bigger NLP type models have several tens of millions of parameters. But since we are training on MNIST this should be more than sufficient.
@@ -343,6 +331,7 @@ def train_epoch(model, optimizer, data_loader, loss_history):
         loss = F.nll_loss(output, target)
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         if i % 100 == 0:
             print(
@@ -397,10 +386,41 @@ def evaluate(model, data_loader, loss_history):
 
 # %%
 
-LOAD = False
+dim = 4
+heads = 2
+dim_head = dim // heads
+
+mlp_dim = dim * 2
+
+
+model = ViT(
+    image_size=28,
+    patch_size=4,
+    num_classes=10,
+    channels=1,
+    dim=dim,
+    dim_head=dim_head,
+    depth=4,
+    heads=heads,
+    mlp_dim=32,
+)
+optimizer = optim.Adam(model.parameters(), lr=1e-3)
+scheduler = optim.lr_scheduler.ExponentialLR(optimizer, (0.5 ** (1 / 60000)))
+
+model.to(device)
+
+# %%
+
+LOAD = True
+TRAIN = True
+SAVE = True
+
+file = "tiny_zp.pt"
 
 # file = "model1.pt"
-file = "model2.pt"
+# file = "model2.pt"
+# file = "model3.pt"
+# file = "model4.pt"
 
 N_EPOCHS = 10
 
@@ -410,13 +430,17 @@ train_loss_history, test_loss_history = [], []
 
 if LOAD:
     # model.load_state_dict(torch.load("model1.pt", weights_only=True))
-    model = torch.load(file, weights_only=False)
-else:
+    model.load_state_dict(torch.load(file, weights_only=True))
+
+summary(model)
+
+if TRAIN:
     for epoch in range(1, N_EPOCHS + 1):
         print("Epoch:", epoch)
         train_epoch(model, optimizer, train_loader, train_loss_history)
         evaluate(model, test_loader, test_loss_history)
-        torch.save(model, file)
+        if SAVE:
+            torch.save(model.state_dict(), file)
 
     print("Execution time:", "{:5.2f}".format(time.time() - start_time), "seconds")
 
@@ -452,6 +476,7 @@ def plot_confusion_matrix(model, data_loader):
     plt.show()
 
 
+print("plot_confusion_matrix(model, test_loader)")
 plot_confusion_matrix(model, test_loader)
 
 
@@ -465,11 +490,12 @@ def plot_predictions(model, data_loader):
 
     with torch.no_grad():
         for data, target in data_loader:
+            data, target = data.to(device), target.to(device)
             output = model(data)
             _, preds = torch.max(output, dim=1)
-            all_preds.extend(preds.numpy())
-            all_labels.extend(target.numpy())
-            all_images.extend(data.numpy())
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(target.cpu().numpy())
+            all_images.extend(data.cpu().numpy())
 
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
@@ -486,4 +512,5 @@ def plot_predictions(model, data_loader):
     plt.show()
 
 
+print("plot_predictions(model, test_loader)")
 plot_predictions(model, test_loader)

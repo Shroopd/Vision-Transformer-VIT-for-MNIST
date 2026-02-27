@@ -136,6 +136,7 @@ class AttentionZP(nn.Module):
         bias_query: bool,
         return_attention: bool = False,
         mask: Callable[[torch.Tensor], torch.Tensor] | None = None,
+        dropout = 0.0
     ) -> None:
         super().__init__()
 
@@ -159,6 +160,7 @@ class AttentionZP(nn.Module):
 
         self.return_attention = return_attention
         self.mask = mask
+        self.dropout = nn.Dropout(dropout)
 
     def forward(
         self,
@@ -219,10 +221,10 @@ class AttentionZP(nn.Module):
         value_shift = value_shift.sum(-3)
         #  [..., Q, T]
 
-        if self.return_attention:
-            return value_shift, attention_logits
-        else:
-            return value_shift
+        # if self.return_attention:
+        #     return value_shift, attention_logits
+        # else:
+        return self.dropout(value_shift)
 
 
 class NaiveUnaryZP(nn.Module):
